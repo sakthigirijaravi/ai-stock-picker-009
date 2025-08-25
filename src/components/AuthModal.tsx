@@ -17,10 +17,12 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
     try {
       setIsLoading(true);
       await signInWithGoogle();
-      // Modal will close automatically when auth state changes
+      // Don't close modal immediately - let auth callback handle it
     } catch (error) {
       console.error('Sign in error:', error);
       setIsLoading(false);
+      // Show error message to user
+      alert('Sign in failed. Please try again.');
     }
   };
 

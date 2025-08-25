@@ -23,12 +23,24 @@ export interface QuarterSummary {
 class PortfolioService {
   private realtimeChannel: RealtimeChannel | null = null;
   private subscribers: Set<(data: PortfolioConstituent[]) => void> = new Set();
+  private connectionRetries = 0;
+  private maxRetries = 3;
+  private retryDelay = 1000;
 
   /**
    * Get all portfolio constituents for a specific quarter
    */
   async getPortfolioByQuarter(quarter: string): Promise<PortfolioConstituent[]> {
     try {
+      console.log('Fetching portfolio data for quarter:', quarter);
+      
+      // Ensure we have a valid session
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        console.warn('No active session found');
+        // Still try to fetch data as it might be publicly accessible
+      }
+      
       const { data, error } = await supabase
         .from('portfolio_constituents')
         .select('*')
@@ -37,9 +49,20 @@ class PortfolioService {
 
       if (error) {
         console.error('Error fetching portfolio by quarter:', error);
+        
+        // Retry logic for connection issues
+        if (this.connectionRetries < this.maxRetries && (error.message.includes('connection') || error.message.includes('network'))) {
+          this.connectionRetries++;
+          console.log(`Retrying connection (${this.connectionRetries}/${this.maxRetries})...`);
+          await new Promise(resolve => setTimeout(resolve, this.retryDelay * this.connectionRetries));
+          return this.getPortfolioByQuarter(quarter);
+        }
+        
         throw error;
       }
 
+      this.connectionRetries = 0; // Reset on success
+      console.log('Successfully fetched portfolio data:', data?.length || 0, 'items');
       return data || [];
     } catch (error) {
       console.error('Error in getPortfolioByQuarter:', error);
@@ -52,6 +75,8 @@ class PortfolioService {
    */
   async getLatestPortfolio(): Promise<PortfolioConstituent[]> {
     try {
+      console.log('Fetching latest portfolio...');
+      
       // First, get the latest quarter
       const { data: latestQuarter, error: quarterError } = await supabase
         .from('portfolio_constituents')
@@ -65,9 +90,11 @@ class PortfolioService {
       }
 
       if (!latestQuarter || latestQuarter.length === 0) {
+        console.log('No quarters found');
         return [];
       }
 
+      console.log('Latest quarter:', latestQuarter[0].quarter);
       // Then get all constituents for that quarter
       return this.getPortfolioByQuarter(latestQuarter[0].quarter);
     } catch (error) {
@@ -81,6 +108,8 @@ class PortfolioService {
    */
   async getQuartersSummary(): Promise<QuarterSummary[]> {
     try {
+      console.log('Fetching quarters summary...');
+      
       const { data, error } = await supabase
         .from('portfolio_constituents')
         .select('quarter, weight, quarterly_returns')
@@ -89,6 +118,11 @@ class PortfolioService {
       if (error) {
         console.error('Error fetching quarters summary:', error);
         throw error;
+      }
+
+      if (!data || data.length === 0) {
+        console.log('No portfolio data found');
+        return [];
       }
 
       // Group by quarter and calculate summaries
@@ -112,12 +146,15 @@ class PortfolioService {
         });
       });
 
-      return Array.from(quarterMap.entries()).map(([quarter, summary]) => ({
+      const summaries = Array.from(quarterMap.entries()).map(([quarter, summary]) => ({
         quarter,
         total_stocks: summary.total_stocks,
         avg_returns: summary.total_returns / summary.total_stocks,
         total_weight: summary.total_weight
       }));
+      
+      console.log('Quarters summary:', summaries.length, 'quarters found');
+      return summaries;
     } catch (error) {
       console.error('Error in getQuartersSummary:', error);
       throw error;
@@ -217,9 +254,11 @@ class PortfolioService {
    * Subscribe to real-time updates for portfolio constituents
    */
   subscribeToUpdates(callback: (data: PortfolioConstituent[]) => void, quarter?: string): () => void {
+    console.log('Setting up real-time subscription for quarter:', quarter);
     this.subscribers.add(callback);
 
     if (!this.realtimeChannel) {
+      console.log('Creating new real-time channel...');
       this.realtimeChannel = supabase
         .channel('portfolio_constituents_changes')
         .on(
@@ -242,6 +281,7 @@ class PortfolioService {
                 updatedData = await this.getLatestPortfolio();
               }
 
+              console.log('Broadcasting update to', this.subscribers.size, 'subscribers');
               // Notify all subscribers
               this.subscribers.forEach(subscriber => {
                 try {
@@ -257,15 +297,32 @@ class PortfolioService {
         )
         .subscribe((status) => {
           console.log('Real-time subscription status:', status);
+          
+          if (status === 'SUBSCRIBED') {
+            console.log('Successfully subscribed to real-time updates');
+          } else if (status === 'CHANNEL_ERROR') {
+            console.error('Real-time subscription error');
+            // Attempt to reconnect
+            setTimeout(() => {
+              console.log('Attempting to reconnect real-time subscription...');
+              this.realtimeChannel?.unsubscribe();
+              this.realtimeChannel = null;
+              // Re-subscribe will happen on next call
+            }, 5000);
+          }
         });
+    } else {
+      console.log('Using existing real-time channel');
     }
 
     // Return unsubscribe function
     return () => {
+      console.log('Unsubscribing from real-time updates');
       this.subscribers.delete(callback);
       
       // If no more subscribers, close the channel
       if (this.subscribers.size === 0 && this.realtimeChannel) {
+        console.log('Closing real-time channel (no more subscribers)');
         this.realtimeChannel.unsubscribe();
         this.realtimeChannel = null;
       }

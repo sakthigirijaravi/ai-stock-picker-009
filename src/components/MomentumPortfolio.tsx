@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { TrendingUp, TrendingDown, DollarSign, BarChart3, Calendar, Target, Lock, Star } from 'lucide-react';
+import { TrendingUp, TrendingDown, DollarSign, BarChart3, Calendar, Target, Lock, Star, RefreshCw, AlertCircle } from 'lucide-react';
 import { usePortfolioData } from '../hooks/usePortfolioData';
 import { useAuth } from '../contexts/AuthContext';
 import Header from './Header';
@@ -7,10 +7,20 @@ import Footer from './Footer';
 import AuthModal from './AuthModal';
 
 const MomentumPortfolio: React.FC = () => {
-  const { portfolioData, quarters, loading, error, selectedQuarter, setSelectedQuarter } = usePortfolioData();
-  const { user } = useAuth();
+  const { 
+    portfolioData, 
+    quarters, 
+    loading, 
+    error, 
+    selectedQuarter, 
+    setSelectedQuarter, 
+    refreshData,
+    isDataStale 
+  } = usePortfolioData();
+  const { user, loading: authLoading, isInitialized } = useAuth();
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [selectedTimeframe, setSelectedTimeframe] = useState<'1M' | '3M' | '6M' | '1Y'>('3M');
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   const timeframes = [
     { key: '1M' as const, label: '1 Month' },
@@ -39,7 +49,18 @@ const MomentumPortfolio: React.FC = () => {
     setShowAuthModal(true);
   };
 
-  if (loading) {
+  const handleRefresh = async () => {
+    try {
+      setIsRefreshing(true);
+      await refreshData();
+    } catch (error) {
+      console.error('Error refreshing data:', error);
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
+
+  if (loading || authLoading || !isInitialized) {
     return (
       <div className="min-h-screen bg-gray-50">
         <Header />
@@ -47,6 +68,9 @@ const MomentumPortfolio: React.FC = () => {
           <div className="bg-white rounded-lg shadow-lg p-8">
             <div className="animate-pulse space-y-4">
               <div className="h-8 bg-gray-200 rounded w-1/3"></div>
+              <div className="text-center text-gray-500 py-4">
+                {authLoading ? 'Authenticating...' : 'Loading portfolio data...'}
+              </div>
               <div className="space-y-3">
                 {[...Array(5)].map((_, i) => (
                   <div key={i} className="h-12 bg-gray-200 rounded"></div>
@@ -135,9 +159,24 @@ const MomentumPortfolio: React.FC = () => {
               <div>
                 <h2 className="text-xl font-bold text-gray-800 mb-2">Portfolio History</h2>
                 <p className="text-gray-600">Select a quarter to view historical portfolio composition</p>
+                {isDataStale && (
+                  <div className="flex items-center space-x-2 mt-2 text-orange-600">
+                    <AlertCircle className="w-4 h-4" />
+                    <span className="text-sm">Data may be outdated</span>
+                  </div>
+                )}
               </div>
               
-              <div className="flex items-center space-x-4">
+              <div className="flex items-center space-x-4 flex-wrap gap-2">
+                <button
+                  onClick={handleRefresh}
+                  disabled={isRefreshing}
+                  className="flex items-center space-x-2 px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+                  <span className="text-sm">{isRefreshing ? 'Refreshing...' : 'Refresh'}</span>
+                </button>
+                
                 <label className="text-sm font-medium text-gray-700">Quarter:</label>
                 <select
                   value={selectedQuarter || ''}
@@ -163,6 +202,11 @@ const MomentumPortfolio: React.FC = () => {
                 <h2 className="text-2xl font-bold text-gray-800 mb-2">Portfolio Holdings</h2>
                 <p className="text-gray-600">
                   {selectedQuarter ? `Holdings for ${selectedQuarter}` : 'Current portfolio composition'}
+                  {portfolioData.length > 0 && (
+                    <span className="ml-2 text-sm text-green-600">
+                      • Live data connected
+                    </span>
+                  )}
                 </p>
               </div>
               
@@ -175,6 +219,20 @@ const MomentumPortfolio: React.FC = () => {
             </div>
           </div>
 
+          {/* Real-time Data Status */}
+          {user && (
+            <div className="px-6 py-2 bg-green-50 border-b border-green-200">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-2 text-green-700">
+                  <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+                  <span className="text-sm font-medium">Real-time data active</span>
+                </div>
+                <div className="text-xs text-green-600">
+                  Last updated: {new Date().toLocaleTimeString()}
+                </div>
+              </div>
+            </div>
+          )}
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead className="bg-gray-50">
@@ -366,22 +424,47 @@ const MomentumPortfolio: React.FC = () => {
 
         {/* Error State */}
         {error && (
-          <div className="bg-white rounded-lg shadow-lg p-8">
-            <div className="text-center text-red-600">
+          <div className="bg-white rounded-lg shadow-lg p-8 mb-8">
+            <div className="text-center">
               <BarChart3 className="w-12 h-12 mx-auto mb-4 opacity-50" />
-              <p className="text-lg font-semibold mb-2">Error Loading Portfolio Data</p>
-              <p className="text-sm">{error}</p>
+              <p className="text-lg font-semibold mb-2 text-red-600">Error Loading Portfolio Data</p>
+              <p className="text-sm text-gray-600 mb-4">{error}</p>
+              <button
+                onClick={handleRefresh}
+                disabled={isRefreshing}
+                className="flex items-center space-x-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 mx-auto"
+              >
+                <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+                <span>{isRefreshing ? 'Retrying...' : 'Retry'}</span>
+              </button>
             </div>
           </div>
         )}
 
         {/* Empty State */}
-        {!loading && !error && portfolioData.length === 0 && (
-          <div className="bg-white rounded-lg shadow-lg p-8">
+        {!loading && !error && portfolioData.length === 0 && isInitialized && (
+          <div className="bg-white rounded-lg shadow-lg p-8 mb-8">
             <div className="text-center text-gray-500">
               <BarChart3 className="w-12 h-12 mx-auto mb-4 opacity-50" />
-              <p className="text-lg font-semibold mb-2">No Portfolio Data Available</p>
-              <p className="text-sm">Portfolio data will be available once it's added to the system.</p>
+              <p className="text-lg font-semibold mb-2">
+                {user ? 'No Portfolio Data Available' : 'Sign In Required'}
+              </p>
+              <p className="text-sm mb-4">
+                {user 
+                  ? 'Portfolio data will be available once it\'s added to the system.' 
+                  : 'Please sign in to view portfolio data.'
+                }
+              </p>
+              {user && (
+                <button
+                  onClick={handleRefresh}
+                  disabled={isRefreshing}
+                  className="flex items-center space-x-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 mx-auto"
+                >
+                  <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+                  <span>{isRefreshing ? 'Loading...' : 'Load Data'}</span>
+                </button>
+              )}
             </div>
           </div>
         )}

@@ -70,6 +70,13 @@ const Header = () => {
                 )}
               </>
             )}
+            
+            {loading && (
+              <div className="flex items-center space-x-2">
+                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                <span className="text-sm">Loading...</span>
+              </div>
+            )}
 
             {/* Mobile Menu Button */}
             <button

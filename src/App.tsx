@@ -15,39 +15,34 @@ import { mockStockData } from './data/mockData';
 function AuthCallback() {
   const navigate = useNavigate();
   const location = useLocation();
+  const { restoreSession } = useAuth();
 
   useEffect(() => {
     const handleAuthCallback = async () => {
       try {
-        // Handle the OAuth callback
-        const { data, error } = await supabase.auth.getSession();
+        console.log('Handling auth callback...');
         
-        if (error) {
-          console.error('Auth callback error:', error);
-          navigate('/');
-          return;
-        }
+        // Wait a moment for the auth state to settle
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        
+        // Restore session to ensure all auth state is properly set
+        await restoreSession();
+        
+        // Get the stored location or default to momentum page
+        const lastLocation = localStorage.getItem('lastUserLocation');
+        const redirectTo = lastLocation && lastLocation !== '/auth/callback' ? lastLocation : '/momentum';
+        
+        console.log('Redirecting to:', redirectTo);
+        navigate(redirectTo, { replace: true });
 
-        if (data.session) {
-          // Successfully authenticated, redirect to momentum page
-          navigate('/momentum');
-        } else {
-          // No session, redirect to home
-          navigate('/');
-        }
       } catch (error) {
         console.error('Error handling auth callback:', error);
-        navigate('/');
+        navigate('/', { replace: true });
       }
     };
 
-    // Check if this is an OAuth callback (has access_token in URL)
-    if (location.hash.includes('access_token') || location.search.includes('code')) {
-      handleAuthCallback();
-    } else {
-      navigate('/');
-    }
-  }, [navigate, location]);
+    handleAuthCallback();
+  }, [navigate, location, restoreSession]);
 
   return (
     <div className="min-h-screen bg-gray-50 flex items-center justify-center">
